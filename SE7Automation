@@ -1,0 +1,69 @@
+package com.aurea.utils
+
+import com.atlassian.jira.bc.issue.search.SearchService
+import com.atlassian.jira.component.ComponentAccessor
+import com.atlassian.jira.project.Project
+import com.atlassian.jira.web.bean.PagerFilter
+import com.onresolve.scriptrunner.runner.customisers.WithPlugin
+import com.deiser.jira.profields.api.field.FieldService
+import com.deiser.jira.profields.api.field.user.UserField
+import com.deiser.jira.profields.api.value.ValueService
+import com.atlassian.jira.issue.Issue
+
+import java.text.DateFormat
+import java.text.SimpleDateFormat
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.temporal.TemporalAdjusters
+
+@WithPlugin("com.deiser.jira.profields")
+
+//def projectKeys = ["AESEDI", "AESCIS", "KMECN", "SKYVERA", "KMUAD", "KMAMS", "FIRM58", "SBM", "ACTA", "SONIC", "AS", "ADCM", "DEV", "LLM", "ARS", "CRM", "CRMPAD", "CRMCLIENT", "NEXT", "EVCID", "CONNECT", "CONTROL", "SCALEARC", "OPERATOR", "ACID", "INFER", "INFOBRIGHT", "OSCID", "SL", "GENSYMCID", "SNSGCID", "CPQCID", "FIRE", "TS", "GFIA", "GFIME", "GFIL", "GFIOG", "GFIFM", "CODEGRAPHV3", "BRPCS", "CSRV", "ANTP", "NVHCID", "NVPCID", "MOAFCID", "MOEMSCID", "EXOS", "FIRSTRAIN", "PROLOGICCID", "XOC", "AWORK", "PLACEABLE", "EYPP", "SVSOCIAL", "ECPA", "PAUB", "DNN", "DVSP", "JVANLT", "JVCLD", "JVHOPST", "JVINFR", "JVFINTG", "JVHOPLE", "JVIA", "JVHOPIM", "JVMBL", "JVPBOX", "JVR2E2", "JVSRCH", "JVSINTG", "JVCDM", "KAYAKORW", "CODEFIX", "RMSA", "KAYAKO", "KAYAKOC", "QRETAIL", "CODEGRAPH"]
+def projectKeys = ["CHUTE", "EMEP"]
+
+def issueService = ComponentAccessor.issueService
+def projectManager = ComponentAccessor.projectManager
+def user = ComponentAccessor.jiraAuthenticationContext.getLoggedInUser()
+
+def issueInputParameters = issueService.newIssueInputParameters()
+LocalDate localDate = LocalDate.now();
+localDate = localDate.with(TemporalAdjusters.next(DayOfWeek.MONDAY))
+def operatingDate = Calendar.getInstance()
+operatingDate.set(localDate.getYear(), localDate.getMonth().ordinal(), localDate.getDayOfMonth())
+operatingDate.setFirstDayOfWeek(Calendar.MONDAY)
+def endingDate = Calendar.getInstance()
+endingDate.set(localDate.getYear(), localDate.getMonth().ordinal(), localDate.getDayOfMonth())
+endingDate.add(Calendar.DAY_OF_YEAR, 6)
+DateFormat dateFormat = new SimpleDateFormat("d/MMM/yy")
+SearchService searchService = ComponentAccessor.getComponent(SearchService.class)
+
+def valueService = ComponentAccessor.getOSGiComponentInstanceOfType(ValueService.class)
+def fieldService = ComponentAccessor.getOSGiComponentInstanceOfType(FieldService.class)
+
+projectKeys.each { projectKey ->
+    def query = "project = '${projectKey}' AND type = SE7 AND cf[13006] = ${operatingDate.get(Calendar.WEEK_OF_YEAR)} AND created >= startOfYear()"
+    SearchService.ParseResult parseResult =  searchService.parseQuery(user, query)
+    if (parseResult.isValid()) {
+        def searchResult = searchService.search(user, parseResult.getQuery(), PagerFilter.getUnlimitedFilter())
+        def issues = searchResult.issues.collect {ComponentAccessor.getIssueManager().getIssueObject(it.id)}
+        if(issues?.size() == 0) {
+            issueInputParameters.with {
+                def project = projectManager.getProjectObjByKey(projectKey)
+                projectId = project.id
+                summary = "SE7 unit for W${operatingDate.get(Calendar.WEEK_OF_YEAR)} - ${operatingDate.get(Calendar.YEAR)}"
+                issueTypeId = "12500"
+                reporterId = user.name
+                assigneeId = valueService.getValue(project, fieldService.getByCustomFieldId(16405) as UserField)?.name
+                dueDate = dateFormat.format(endingDate.getTime())
+                addCustomFieldValue("customfield_13006", operatingDate.get(Calendar.WEEK_OF_YEAR) as String)
+            }
+            def validationResult = issueService.validateCreate(user, issueInputParameters)
+            if(validationResult.errorCollection.hasAnyErrors()) {
+                log.error validationResult.getErrorCollection()
+            } else {
+                def issueResult = issueService.create(user, validationResult)
+                log.error "Issue created: ${issueResult.issue.key}"
+            }
+        }
+    }
+}

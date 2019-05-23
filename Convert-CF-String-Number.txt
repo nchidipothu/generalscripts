@@ -1,0 +1,36 @@
+package com.aurea.utils
+
+import com.atlassian.jira.bc.issue.search.SearchService
+import com.atlassian.jira.component.ComponentAccessor
+import com.atlassian.jira.event.type.EventDispatchOption
+import com.atlassian.jira.issue.CustomFieldManager
+import com.atlassian.jira.issue.MutableIssue
+import com.atlassian.jira.issue.index.IssueIndexingService
+import com.atlassian.jira.user.ApplicationUser
+import com.atlassian.jira.web.bean.PagerFilter
+
+import java.text.DecimalFormat
+
+def customFieldManager = ComponentAccessor.customFieldManager
+def issueManager = ComponentAccessor.issueManager
+def issueIndexingService = ComponentAccessor.getComponent(IssueIndexingService.class)
+DecimalFormat decimalFormat = new DecimalFormat();
+ApplicationUser user = ComponentAccessor.getJiraAuthenticationContext().getLoggedInUser()
+def perfResultNumCF = customFieldManager.getCustomFieldObjectByName("Perf Result-Num")
+def perfResultCF = customFieldManager.getCustomFieldObjectByName("Perf Result")
+def jqlSearch = "\"Perf Result\" is not EMPTY" // uncomment this and comment line below, after testing
+//def jqlSearch = "key = SKYVERA-5476" // use one key and try
+def searchService = ComponentAccessor.getComponent(SearchService.class)
+SearchService.ParseResult parseResult =  searchService.parseQuery(user, jqlSearch)
+List<MutableIssue> issues = null;
+if (parseResult.isValid()) {
+    def searchResult = searchService.search(user, parseResult.getQuery(), PagerFilter.getUnlimitedFilter())
+    issues = searchResult.issues.collect {ComponentAccessor.getIssueManager().getIssueObject(it.id)}
+    issues.each{issue->
+        issue.setCustomFieldValue(perfResultNumCF, decimalFormat.parse ( (String) issue.getCustomFieldValue(perfResultCF)).doubleValue())
+        issueManager.updateIssue(user, issue, EventDispatchOption.ISSUE_UPDATED, Boolean.FALSE)
+        issueIndexingService.reIndex(issue)
+    }
+} else {
+    log.error("Invalid JQL: " + jqlSearch);
+}
